@@ -1,0 +1,216 @@
+---
+title: "A survival regression model for left-censored PAH4 data in smoked black tea"
+author: "Truong Ngan Giang"
+date: "2025-11-01"
+output: html_document
+---
+
+## Summary
+
+This project aims to create a survival regression model for left-censored data used to derive a best-fit mean estimate for data sets with non-detects or non-quantifications. The developed model will then be compared to traditional methods, such as substituted with ND/NQ exclusion, LOD/2 and zero substitutes.
+
+**Key findings:**\
+- **Arithmetic mean:** 1.042 μg/kg\
+- **Standard deviation:** 3.308\
+- **Geometric mean (median):** 0.509 μg/kg\
+- **95% confidence interval:** (0.179-1.447) μg/kg
+
+## Method Explanation
+
+Censored data (NDs/NQs) contain valuable information but are often mishandled. Naive methods (LOD/2, zero substitution) introduce bias, while survival analysis properly uses all available information to give unbiased estimates. The censored data is handled as intervals, from lower bound to upper bound. ND values are considered (0, LOD) while NQ values are (0, LOQ).
+
+## Data source
+
+This model utilizes PAH4 data from a study about smoked black tea by Girelli et al., 2017.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(survival)
+library(knitr)
+library(broom)
+```
+
+```{r data-prep, echo=TRUE}
+# Black tea data with NA for NDs/NQs, from studies by Girelli et al. (2017)
+Black <- data.frame(
+  Sample = 1:10,
+  conc_left = c(NA, 2.7, NA, NA, NA, NA, NA, 1.5, 1.6, 1.5),  # NA for NDs/NQs
+  conc_right = c(0.8, 2.7, 0.4, 0.8, 0.8, 0.4, 0.8, 1.5, 1.6, 1.5)  # LOD/LOQ for NDs/NQs
+)
+
+# Display the data
+knitr::kable(Black, 
+             caption = "Table 1: PAH4 data of 10 smoked black tea samples (Girelli et al., 2017)",
+             col.names = c("Sample no", "Lower bound (μg/kg)", "Upper bound (μg/kg)"))
+```
+
+## Survival analysis
+
+```{r survival analysis, echo=TRUE}
+# Fit the interval-censored lognormal model
+modelBlack <- survreg(Surv(conc_left, conc_right, type = "interval2") ~ 1,
+                      data = Black, dist = "lognormal")
+
+# Model summary
+tidy_model <- tidy(modelBlack)
+kable(tidy_model, caption = "Interval-censored lognormal model (Black data)")
+
+
+# Extract parameters
+log_mean <- coef(modelBlack)  # Mean on log scale
+log_sd <- modelBlack$scale    # SD on log scale
+
+# Transform to original scale
+geometric_mean <- exp(log_mean)                     # Median (geometric mean)
+arithmetic_mean <- exp(log_mean + (log_sd^2)/2)     # Arithmetic mean
+geometric_sd <- exp(log_sd)                         # Geometric SD
+
+# Get confidence intervals
+conf_log <- confint(modelBlack)        # On log scale
+conf_geom <- exp(conf_log)             # On original scale
+
+# Create results table
+black_results <- data.frame(
+  Parameter = c("Log Mean", "Log SD", 
+                "Geometric Mean (Median)", "Arithmetic Mean",
+                "Geometric SD"),
+  Estimate = c(round(log_mean, 3), round(log_sd, 3),
+               round(geometric_mean, 3), round(arithmetic_mean, 3),
+               round(geometric_sd, 3)),
+  `95% CI Lower` = c(round(conf_log[1], 3), NA, 
+                     round(conf_geom[1], 3), NA, NA),
+  `95% CI Upper` = c(round(conf_log[2], 3), NA, 
+                     round(conf_geom[2], 3), NA, NA),
+  Units = c("log(μg/kg)", "log(μg/kg)", "μg/kg", "μg/kg", "multiplicative factor")
+)
+
+knitr::kable(black_results,
+             caption = "Table 2: Parameter estimates",
+             col.names = c ("Parameter", "Estimate", "95% CI Lower", "95% CI Upper", "Units"))
+```
+
+## Comparison with naive methods
+
+```{r comparison, echo=TRUE}
+# Compare with naive ethods
+
+# Method 1: Use only detects (ignores NDs/NQs)
+mean_detects_only <- mean(Black$conc_left, na.rm = TRUE)
+
+# Method 2: LOD/2 substitution
+conc_LOD2 <- ifelse(is.na(Black$conc_left), Black$conc_right/2, Black$conc_left)
+mean_LOD2 <- mean(conc_LOD2)
+
+# Method 3: Zero substitution (worst case)
+conc_zero <- ifelse(is.na(Black$conc_left), 0, Black$conc_left)
+mean_zero <- mean(conc_zero)
+
+comparison <- data.frame(
+  Method = c("Interval-Censored Survival", 
+             "Detects Only (excludes NDs/NQs)", 
+             "LOD/2 Substitution", 
+             "Zero Substitution"),
+  Estimate = round(c(arithmetic_mean, mean_detects_only, mean_LOD2, mean_zero), 3),
+  `% Difference from Recommended Method` = round(c(0, 
+                                         (mean_detects_only - arithmetic_mean)/arithmetic_mean*100,
+                                         (mean_LOD2 - arithmetic_mean)/arithmetic_mean*100,
+                                         (mean_zero - arithmetic_mean)/arithmetic_mean*100), 1)
+)
+# Create and display formatted table
+knitr::kable(
+  comparison,
+  caption = "Table 3: Comparison of Different Handling Methods for Censored Data",
+  col.names = c("Method", "Estimate (μg/kg)", "% Difference from Recommended Method")
+)
+```
+
+**Interpretation:**
+
+1\. Detects-only gives the highest estimate (+75% difference), which means this method is likely overestimating the mean value.\
+2. The zero substitution method may underestimate the mean, demonstrated by the -30% differences to the recommended approach.\
+3. LOD/2 shows intermediate difference (-10.7), but still arbitrary.
+
+## Visualization
+
+```{r plot, echo=TRUE, fig.width=10, fig.height=6, fig.cap=" Figure 1: Distribution of Censored Data in Black tea samples"}
+# Add Sample ID to Black
+Black$Sample <- 1:nrow(Black)
+
+# Create a visualization with mapped aesthetics for legend
+p <- ggplot() +
+  # Censoring intervals (horizontal segments)
+  geom_segment(data = Black[is.na(Black$conc_left), ],
+               aes(x = 0, xend = conc_right, y = Sample, yend = Sample,
+                   color = "Censoring interval"), linewidth = 2) +
+  # Censoring limits (vertical ticks)
+  geom_point(data = Black[is.na(Black$conc_left), ],
+             aes(x = conc_right, y = Sample, color = "Censoring limit"),
+             shape = "|", size = 5) +
+  # Detected values
+  geom_point(data = Black[!is.na(Black$conc_left), ],
+             aes(x = conc_left, y = Sample, color = "Detected value"),
+             shape = 19, size = 3) +
+  # Fitted geometric mean
+  geom_vline(aes(xintercept = geometric_mean, color = "Geometric mean"),
+             linetype = "dashed", linewidth = 1) +
+  # Fitted arithmetic mean
+  geom_vline(aes(xintercept = arithmetic_mean, color = "Arithmetic mean"),
+             linetype = "dashed", linewidth = 1) +
+  # Confidence interval
+  geom_rect(aes(xmin = conf_geom[1], xmax = conf_geom[2],
+                ymin = 0.5, ymax = 10.5, fill = "95% CI (geom. mean)"),
+            alpha = 0.1) +
+  labs(
+    title = "Black Tea Samples with Censored Observations",
+    x = "Concentration (μg/kg)",
+    y = "Sample ID",
+    color = "Legend",   # legend title for colors
+    fill = "Legend"     # legend title for fills
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.y = element_text(size = 10)
+  ) +
+  scale_y_continuous(breaks = 1:10, labels = paste("Sample", 1:10)) +
+  scale_color_manual(values = c(
+    "Censoring interval" = "gray",
+    "Censoring limit" = "gray",
+    "Detected value" = "blue",
+    "Geometric mean" = "red",
+    "Arithmetic mean" = "darkgreen"
+  )) +
+  scale_fill_manual(values = c("95% CI (geom. mean)" = "red"))
+
+print(p)
+```
+
+## Limitation
+
+This analysis compares method disagreement rather than true bias. True bias assessment would require:\
+1. Known true population values (unavailable in this data set)\
+2. Simulation studies with controlled data generation
+
+**Future improvement:** A simulation study could validate which method is least biased under similar censoring patterns.
+
+## Conclusion
+
+This analysis demonstrates that:
+
+1\. **Method choice significantly impacts estimates** (58% range between methods)
+
+2\. **Survival analysis provides a statistically principled approach** that:
+
+\- Uses all available information without arbitrary substitutions
+
+\- Provides uncertainty quantification via confidence intervals
+
+\- Is recommended by statistical guidelines for censored data
+
+3\. **For decision-making**, the interval-censored estimate of 1.042 μg/kg (95% CI: 0.179-1.447) should be preferred over naive methods.
+
+## References
+
+Girelli, A. M., Apriceno, A., Tarola, A. M., & Tortora, F. (2017). Determination of Polycyclic Aromatic Hydrocarbons in Tea Infusions Samples by High Performance Liquid Chromatography with Fluorimetric Detection. Journal of Food Quality, 2017, 1–7. <https://doi.org/10.1155/2017/1076876>

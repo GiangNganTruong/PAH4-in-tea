@@ -1,0 +1,208 @@
+---
+title: "PAH4 in RTD teas: Probabilistic Health Risk Assessment for Taiwanese consumers"
+author: "Truong Ngan Giang"
+date: "2025-11-11"
+output: 
+  html_document
+---
+
+## Summary
+
+This analysis estimates the Margin of Exposure (MOE) for PAH4 exposure from ready-to-drink tea consumption in Taiwanese population subgroups using Monte Carlo simulation.
+
+**Key finding:** MOE results unequivocally indicate low health risk from daily RTD tea consumption across all demographic groups, from least to most exposed consumers.
+
+## 1. Introduction
+
+Polycyclic aromatic hydrocarbons (PAH) are carcinigenic and genotoxic compounds formed during food processing, particularly in grilled or smoked foods. A group of four PAHs, which are BaP, benz[a]anthracene (BaA), chrysene (CHR), and benzo[b]fluoranthene (BbF), commonly referred to as PAH4, were chosen as risk indicators of overall PAH contamination in food (European Commission, 2011a). The European Food Safety Authority (EFSA) established a Benchmark Dose Lower Confidence Limit (BMDL10) of 0.34 mg/kg bw/day for the sum of 4 PAHs The Margin of Exposure (MOE) is calculated as: MOE = BMDL10/EDI with EDI = PAH4 concentrations x Consumption rate/ Body Weight
+
+EFSA considers MOE values above 10,000 as of low concern for public health and risk managers (EFSA, 2005). For a conservative estimation, upper-bound estimates were used in a probabilistic Monte Carlo model. MOE values are presented as the 2.5th, 50th (median), and 97.5th percentiles for each demographic group, where:
+
+-   **2.5th percentile:** Most vulnerable consumers (upper bound of exposure)
+-   **50th percentile:** Average consumers
+-   **97.5th percentile:** Least exposed consumers
+
+## 2. Methods
+
+### 2.1 Data Sources
+
+-   **Tea consumption and body weight:** Taiwan Food and Drug Administration (TFDA) national surveys (2017-2020)
+-   **PAH4 concentrations:** 51 tea samples analyzed for PAH4 content using a validated HPLC-FLD methods
+-   **Risk assessment parameter:** EFSA BMDL10 value (2008)
+
+### 2.2 Monte Carlo Simulation
+
+A 10,000-iteration Monte Carlo simulation was performed assuming lognormal distributions for all input variables. The simulation propagates uncertainty through the exposure assessment:
+
+```{r data-prep, echo=TRUE}
+# Population group data
+pah4_profiles <- data.frame(
+  group = c("Male_0_3", "Male_3_6", "Male_6_12", "Male_12_16", "Male_16_18", "Male_19_65", 
+            "Female_0_3", "Female_3_6", "Female_6_12","Female_12_16", "Female_16_18", "Female_19_65"),
+  # Tea consumption data (g/day)
+  meanTea = c(158.47, 225.05, 376.35, 524.73, 556.15, 843.99, 
+              126.63, 172.28, 305.67, 379.94, 461.17, 565.50),  
+  sdTea = c(116.96, 173.68, 236.96, 346.89, 408.43, 836.87, 
+            91.73, 154.33, 228.84, 256.29, 345.76, 580.28),
+  # Body weight data (kg)
+  meanW = c(13.46, 20.52, 37.91, 61.75, 67.12, 73.19, 
+            12.27, 19.59, 35.18, 53.45, 58.11, 59.97),
+  sdW = c(3.27, 5.04, 13.37, 16.31, 14.19, 14.29, 
+          3.01, 4.51, 11.98, 11.91, 13.99, 11.68)
+)
+
+# PAH4 concentration data (μg/kg): For a conservative estimation, the upper-bound estimates were used for assessment. Upper-bound estimates assume that the amounts in non-detected/non-quantified samples are equal Limit of Detection/Limit of Quantitation.  
+meanpah4 <- 0.422
+sdpah4 <- 0.217
+
+# Display data summary
+knitr::kable(pah4_profiles, 
+             caption = "Table 1: Population group characteristics from TFDA surveys",
+             col.names = c("Group", "Mean Tea (g/day)", "SD Tea", "Mean BW (kg)", "SD BW"))
+```
+
+### 2.3 Simulation Code
+
+```{r simulation-code, echo=TRUE}
+# Monte Carlo simulation
+n_iter <- 10000
+pah4_results <- data.frame()
+
+set.seed(123)  
+
+for (i in 1:nrow(pah4_profiles)) {
+  # Extract parameters for current group
+  meanTea <- pah4_profiles$meanTea[i]
+  sdTea <- pah4_profiles$sdTea[i]
+  meanW <- pah4_profiles$meanW[i]
+  sdW <- pah4_profiles$sdW[i]
+  group <- pah4_profiles$group[i]
+  
+  # Simulate tea consumption (lognormal)
+  simTea <- rlnorm(n_iter, 
+                   meanlog = log(meanTea^2 / sqrt(sdTea^2 + meanTea^2)),
+                   sdlog = sqrt(log(1 + (sdTea^2 / meanTea^2)))) / 1000
+  
+  # Simulate body weight (lognormal)
+  simW <- rlnorm(n_iter, 
+                 meanlog = log(meanW^2 / sqrt(sdW^2 + meanW^2)),
+                 sdlog = sqrt(log(1 + (sdW^2 / meanW^2))))
+  
+  # Simulate PAH4 concentration (lognormal)
+  simpah4 <- rlnorm(n_iter, 
+                   meanlog = log(meanpah4^2 / sqrt(sdpah4^2 + meanpah4^2)),
+                   sdlog = sqrt(log(1 + (sdpah4^2 / meanpah4^2))))
+  
+  # Calculate daily intake and MOE
+  DI <- (simpah4 * simTea) / simW  # μg/kg bw/day
+  MOE <- 0.34 * 1000 / DI  # Convert BMDL10 from mg to μg
+  
+  # Store percentiles
+  q <- quantile(MOE, probs = c(0.025, 0.5, 0.975))
+  pah4_results <- rbind(pah4_results, data.frame(group = group, 
+                                       p2.5 = q[1], 
+                                       p50 = q[2], 
+                                       p97.5 = q[3]))
+}
+
+rownames(pah4_results) <- NULL
+```
+
+## 3. Results
+
+### 3.1 MOE Estimates by Population Group
+
+```{r results-table, echo=TRUE}
+# Display results
+knitr::kable(pah4_results, 
+             digits = 0,
+             col.names = c("Population Group", 
+                          "2.5th Percentile", 
+                          "Median (50th)", 
+                          "97.5th Percentile"),
+             caption = "Table 2: Margin of Exposure (MOE) estimates")
+
+# Identify groups below safety threshold
+cat("\n**Groups with MOE < 10,000 at median:**\n")
+pah4_risk_groups <- pah4_results[pah4_results$p50 < 10000, ]
+print(pah4_risk_groups)
+```
+
+**Interpretation:** For all age and gender groups, MOE values exceeded the safety threshold of 10,000, even for the most vulnerable consumers (2.5th percentile). The MOE values for this group ranged from 17,028 to 31,431. The average consumer groups showed MOE values ranging from 93,808 to 150,301, while the least exposed groups showed values from 505,037 to 1,088,716; which is substantially higher than the safety threshold. The MOE values of female consumers were higher than their male counterparts, due to differences in their consumption patterns.
+
+### 3.2 Visualization
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+```
+
+```{r visualization, echo=TRUE, fig.width=10, fig.height=6, fig.cap="Figure 1: Margin of Exposure (MOE) by population group. Red dashed line indicates safety threshold (MOE = 10,000)."}
+
+# Prepare data for visualization
+data_long <- pah4_results %>%
+  separate(group, into = c("Gender", "Age_Group"), sep = "_") %>%
+  pivot_longer(
+    cols = c(p2.5, p50, p97.5),
+    names_to = "Percentile",
+    values_to = "MOE"
+  ) %>%
+  mutate(
+    Gender = factor(Gender, levels = c("Female", "Male")),
+    Percentile = recode(Percentile,
+                        "p2.5" = "2.5th",
+                        "p50" = "50th",
+                        "p97.5" = "97.5th"),
+    Age_Group = factor(Age_Group, levels = unique(Age_Group)),
+    Position = as.numeric(Age_Group) + ifelse(Gender == "Female", -0.2, 0.2)
+  )
+
+# Create plot
+ggplot(data_long, aes(x = Position, y = MOE)) +
+  geom_hline(yintercept = 10000, linetype = "dashed", 
+             color = "red", linewidth = 1, alpha = 0.7) +
+  geom_point(aes(shape = Percentile, color = Gender), size = 3) +
+  scale_shape_manual(values = c("2.5th" = 1, "50th" = 16, "97.5th" = 17)) +
+  scale_color_manual(values = c("Female" = "#E41A1C", "Male" = "#377EB8")) +
+  scale_y_log10(
+    breaks = 10^(3:7),
+    labels = c("1,000", "10,000", "100,000", "1,000,000", "10,000,000"),
+    limits = c(1000, 10^7)
+  ) +
+  scale_x_continuous(
+    breaks = 1:6,
+    labels = c("0-3", "3-6", "6-12", "12-16", "16-18", "19-65")
+  ) +
+  labs(
+    title = "PAH4 Exposure Margins in Taiwanese RTD Tea Consumers",
+    x = "Age Group (years)", 
+    y = "Margin of Exposure (MOE, log scale)",
+    shape = "Percentile",
+    color = "Gender"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    axis.title = element_text(size = 12)
+  )
+```
+
+## 4. Conclusion
+
+This probabilistic simulation of consumption risks suggests that ready-to-drink tea consumption posed negligible carcinogenic risk from PAH4 for all population groups in Taiwan.
+
+## References
+
+1.  European Commission. (2011a). Commission Regulation (EU) No. 835/2011 of 19 August 2011 amending Regulation (EC) No. 1881/2006 as regards polycyclic aromatic hydrocarbons (OJ L 215, 20.8.2011, pp. 4–8). EUR-Lex. <https://eur-lex.europa.eu/eli/reg/2011/835/oj/eng>
+
+2.  European Food Safety Authority (EFSA). (2005). Opinion of the Scientific Committee on a request from EFSA related to a harmonised approach for risk assessment of substances which are both genotoxic and carcinogenic. EFSA Journal, 3(10), 282.<https://doi.org/10.2903/j.efsa.2005.282>
+
+3.  European Food Safety Authority (EFSA). Polycyclic aromatic hydrocarbons in food - Scientific opinion of the Panel on Contaminants in the Food Chain. EFSA Journal, 6(8), 724. <https://doi.org/10.2903/j.efsa.2008.724>
+
+4.  GEMS / Food-EURO Second Workshop on Reliable Evaluation of Low-Level Contamination of food Report on a workshop in the frame of GEMS / Food-EURO Kulmbach. (1999). <https://www.semanticscholar.org/paper/GEMS-Food-EURO-Second-Workshop-on-Reliable-of-of-on/7d5162794a407ce3361458649750a63b6bda3381>
+
+5.  Joint, F. A. O. (2005). Joint FAO/WHO Expert. Committee on Food Additives Sixty-Fourth Meeting, Rome, 8–17 February 2005. World Health Organization: Geneva, Switzerland. <https://openknowledge.fao.org/handle/20.500.14283/at877e>
+
+6.  Taiwan Food and Drug Administration & National Institutes of Health. (2020). Calculation results of consumer-only food item intake (2017-2020 Nutrition Survey). In National Food Intake Database. <https://tnfcds.nhri.edu.tw/>
