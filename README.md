@@ -5,8 +5,8 @@ This repository contains the R scripts used for statistical analysis and health 
 **PAH4 in Ready-to-Drink Tea in Taiwan: Determination using HPLC-FLD and Health Risk Assessment**
 
 My initial project aims to 
-1. Develop and validate an HPLC-FLD method for PAH4 detection in RTD tea.
-2. Analyze 51 commercial RTD tea samples (green, oolong, black) from the Taiwanese market.
+1. Develop and validate an HPLC-FLD method for PAH4 detection in tea.
+2. Analyze commercial tea samples from the Taiwanese market.
 3. Assess PAH4 contamination levels and compare with traditional tea infusion studies.
 4. Conduct a probabilistic health risk assessment using Monte Carlo simulation.
 
